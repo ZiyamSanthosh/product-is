@@ -1,0 +1,77 @@
+name: Maven Integration Tests
+
+on:
+  workflow_dispatch: 
+    inputs:
+      pr:
+        description: "Enter the branch name"
+        default: "support-5.6.0.x-full"
+        required: true
+      jdk:
+        description: "Enter Java version (ex: 8,11)"
+        default: "8"
+        required: true
+      isVersion:
+        description: "Enter IS version (ex: 5.10.0)"
+        default: "5.6.0"
+        required: true
+  
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.pr }}
+
+      - name: Set up Adopt JDK 11
+        uses: actions/setup-java@v4
+        with:
+          distribution: "adopt"
+          java-version: ${{ github.event.inputs.jdk }}
+          cache: maven
+
+      - name: Install custom jar into Maven local repo
+        if: ${{ github.event.inputs.isVersion == '5.10.0' }}
+        run: |
+          mvn install:install-file \
+            -Dfile=libs/h2-2.2.224.wso2v1.jar \
+            -DgroupId=org.wso2.orbit.com.h2database \
+            -DartifactId=h2 \
+            -Dversion=2.2.224.wso2v1 \
+            -Dpackaging=jar
+      - name: Install custom jar into Maven local repo
+        if: ${{ github.event.inputs.isVersion == '5.6.0' }}
+        run: |
+          mvn install:install-file \
+            -Dfile=libs/org.wso2.carbon.idp.mgt.stub-5.11.256.14.jar \
+            -DgroupId=org.wso2.carbon.identity.framework \
+            -DartifactId=org.wso2.carbon.idp.mgt.stub \
+            -Dversion=5.11.256.14 \
+            -Dpackaging=jar
+
+      - name: Build with Maven (skip tests)
+        run: mvn clean install -DskipTests=true
+
+      - name: Download wso2is-<version>.zip
+        run: gh release download --repo ${{ github.repository }} --pattern wso2is-"${{ github.event.inputs.isVersion }}.zip" --dir .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Replace wso2is-<version>.zip in distribution
+        run: |
+          mkdir -p modules/distribution/target
+          cp wso2is-${{ github.event.inputs.isVersion }}.zip modules/distribution/target/wso2is-${{ github.event.inputs.isVersion }}.zip
+
+      - name: Run integration tests
+        working-directory: modules/integration/tests-integration/tests-backend
+        run: mvn clean install
+
+      - name: Upload Surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: modules/integration/tests-integration/tests-backend/target/surefire-reports
