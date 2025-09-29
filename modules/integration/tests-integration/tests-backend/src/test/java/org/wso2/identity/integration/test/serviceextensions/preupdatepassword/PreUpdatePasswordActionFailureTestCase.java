@@ -138,6 +138,7 @@ public class PreUpdatePasswordActionFailureTestCase extends PreUpdatePasswordAct
         userId = scim2RestClient.createUser(userInfo);
 
         updatePasswordRecoveryFeatureStatus(true);
+        updateSelfRegistrationStatus(true);
         enableAdminPasswordResetRecoveryEmailLink();
         updateAdminInitiatedPasswordResetEmailFeatureStatus(true);
 
@@ -149,8 +150,6 @@ public class PreUpdatePasswordActionFailureTestCase extends PreUpdatePasswordAct
                 "Basic " + getBase64EncodedString(MOCK_SERVER_AUTH_BASIC_USERNAME,
                         MOCK_SERVER_AUTH_BASIC_PASSWORD),
                 actionResponse.getResponseBody(), actionResponse.getStatusCode());
-        updateFlowStatus(REGISTRATION_FLOW_TYPE, true);
-        addRegistrationFlow(flowManagementClient);
     }
 
     @BeforeMethod
@@ -164,6 +163,7 @@ public class PreUpdatePasswordActionFailureTestCase extends PreUpdatePasswordAct
     public void atEnd() throws Exception {
 
         updatePasswordRecoveryFeatureStatus(false);
+        updateSelfRegistrationStatus(false);
         updateAdminInitiatedPasswordResetEmailFeatureStatus(false);
 
         deleteAction(PRE_UPDATE_PASSWORD_API_PATH, actionId);
@@ -177,7 +177,6 @@ public class PreUpdatePasswordActionFailureTestCase extends PreUpdatePasswordAct
         Utils.getMailServer().purgeEmailFromAllMailboxes();
         serviceExtensionMockServer.stopServer();
         serviceExtensionMockServer = null;
-        updateFlowStatus(REGISTRATION_FLOW_TYPE, false);
     }
 
     @Test(description = "Verify the password update in self service portal with pre update password action")
@@ -388,9 +387,11 @@ public class PreUpdatePasswordActionFailureTestCase extends PreUpdatePasswordAct
     }
 
     @Test(dependsOnMethods = "testApplicationInitiatedUserRegistration",
-            description = "Verify the user initiated registration with pre update password action failure")
-    public void testUserInitiatedUserRegistration() throws Exception {
+            description = "Verify the user initiated self registration flow with pre update password action failure")
+    public void testUserRegistrationWithSelfRegistrationFlow() throws Exception {
 
+        updateFlowStatus(REGISTRATION_FLOW_TYPE, true);
+        addRegistrationFlow(flowManagementClient);
         flowExecutionClient.initiateFlowExecution(REGISTRATION_FLOW_TYPE);
         FlowExecutionRequest flowExecutionRequest = buildUserRegistrationFlowRequest();
         Object executeResponseObj = flowExecutionClient.executeFlow(flowExecutionRequest);
@@ -399,14 +400,29 @@ public class PreUpdatePasswordActionFailureTestCase extends PreUpdatePasswordAct
         Error error = (Error) executeResponseObj;
         int expectedStatus = expectedPasswordUpdateResponse.getStatusCode();
         if (expectedStatus == HttpServletResponse.SC_INTERNAL_SERVER_ERROR) {
-            assertEquals(error.getCode(), "FE-65008", "Unexpected error code in response.");
+            assertEquals(error.getCode(), "FEE-65001", "Unexpected error code in response.");
             assertEquals(error.getMessage(), "Error while onboarding user.",
                     "Unexpected error message in response.");
         } else if (expectedStatus == HttpServletResponse.SC_BAD_REQUEST) {
-            assertEquals(error.getCode(), "FE-60012", "Unexpected error code in response.");
+            assertEquals(error.getCode(), "FEE-60003", "Unexpected error code in response.");
             assertEquals(error.getMessage(), expectedPasswordUpdateResponse.getErrorMessage(),
                     "Unexpected error message in response.");
         }
+        assertActionRequestPayload(null, TEST_USER_PASSWORD, PreUpdatePasswordEvent.FlowInitiatorType.USER,
+                PreUpdatePasswordEvent.Action.REGISTER);
+        updateFlowStatus(REGISTRATION_FLOW_TYPE, false);
+    }
+
+    @Test(dependsOnMethods = "testUserRegistrationWithSelfRegistrationFlow",
+            description = "Verify the user initiated self registration with pre update password action failure")
+    public void testUserInitiatedSelfRegistration() throws Exception {
+
+        String userRegistrationFormURL = retrieveUserRegistrationURL(application);
+        HttpResponse httpResponse = submitUserRegistrationForm(userRegistrationFormURL, TEST_USER2_USERNAME,
+                TEST_USER_PASSWORD);
+        Assert.assertEquals(httpResponse.getStatusLine().getStatusCode(), HttpServletResponse.SC_OK);
+        assertErrors(httpResponse);
+
         assertActionRequestPayload(null, TEST_USER_PASSWORD, PreUpdatePasswordEvent.FlowInitiatorType.USER,
                 PreUpdatePasswordEvent.Action.REGISTER);
     }
