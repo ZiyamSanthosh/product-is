@@ -43,6 +43,7 @@
   "http_access_log.prefix": "http_access_",
   "http_access_log.suffix": ".log",
   "http_access_log.pattern": "%h %l %u %t %r %s %b &quot;%{Referer}i&quot; &quot;%{User-Agent}i&quot; %T",
+  "http_access_log.request_attributes_enabled": false,
 
   "log_correlation.header_config": "{'activityid':'Correlation-ID'}",
 
@@ -74,13 +75,14 @@
   "legacy_authz_runtime.enable": false,
   "management_console_deprecation_banner.enable": true,
 
-  "console.doc_site_path": "https://is.docs.wso2.com/en/latest",
+  "console.doc_site_path": "https://is.docs.wso2.com/en/7.2.0",
 
   "admin_service.deny_list": [
     "CarbonAppUploader",
     "WebappAdmin",
     "FileDownloadService",
     "FileUploadService",
-    "LoginStatisticsAdmin"
+    "LoginStatisticsAdmin",
+    "NDataSourceAdmin"
   ]
 }

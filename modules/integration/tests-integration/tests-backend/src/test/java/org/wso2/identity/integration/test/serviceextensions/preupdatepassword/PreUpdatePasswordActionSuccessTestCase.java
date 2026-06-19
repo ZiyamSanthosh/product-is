@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (http://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (http://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -21,6 +21,7 @@ package org.wso2.identity.integration.test.serviceextensions.preupdatepassword;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.http.HttpResponse;
+import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.util.EntityUtils;
 import org.json.simple.JSONArray;
 import org.testng.Assert;
@@ -28,7 +29,6 @@ import org.testng.annotations.*;
 import org.wso2.carbon.automation.engine.context.TestUserMode;
 import org.wso2.identity.integration.test.rest.api.server.flow.execution.v1.model.FlowExecutionRequest;
 import org.wso2.identity.integration.test.rest.api.server.flow.execution.v1.model.FlowExecutionResponse;
-import org.wso2.identity.integration.test.restclients.*;
 import org.wso2.identity.integration.test.serviceextensions.common.ActionsBaseTestCase;
 import org.wso2.identity.integration.test.serviceextensions.mockservices.ServiceExtensionMockServer;
 import org.wso2.identity.integration.test.serviceextensions.model.*;
@@ -49,6 +49,9 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
+import org.wso2.identity.integration.test.utils.OAuth2Constant;
+
+import static org.wso2.identity.integration.test.utils.OAuth2Constant.OAUTH2_GRANT_TYPE_AUTHORIZATION_CODE;
 
 /**
  * Integration test class for testing the pre update password action execution.
@@ -67,6 +70,7 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
     private String clientSecret;
     private String actionId;
     private String userId;
+    private String userAccessToken;
     private ApplicationResponseModel application;
     private ServiceExtensionMockServer serviceExtensionMockServer;
 
@@ -94,10 +98,12 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
         scim2RestClient = new SCIM2RestClient(serverURL, tenantInfo);
         usersRestClient = new UsersRestClient(serverURL, tenantInfo);
 
-        application = addApplicationWithGrantType(CLIENT_CREDENTIALS_GRANT_TYPE);
+        application = createApplicationWithGrantTypes(CLIENT_CREDENTIALS_GRANT_TYPE, OAUTH2_GRANT_TYPE_AUTHORIZATION_CODE,
+                OAuth2Constant.OAUTH2_GRANT_TYPE_RESOURCE_OWNER);
         OpenIDConnectConfiguration oidcConfig = getOIDCInboundDetailsOfApplication(application.getId());
         clientId = oidcConfig.getClientId();
         clientSecret = oidcConfig.getClientSecret();
+        authorizeChangePasswordApi(application.getId());
 
         UserObject userInfo = new UserObject()
                 .userName(TEST_USER1_USERNAME)
@@ -105,6 +111,7 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
                 .name(new Name().givenName(TEST_USER_GIVEN_NAME).familyName(TEST_USER_LASTNAME))
                 .addEmail(new Email().value(TEST_USER_EMAIL));
         userId = scim2RestClient.createUser(userInfo);
+        userAccessToken = getUserPasswordUpdateToken(clientId, clientSecret, TEST_USER1_USERNAME, TEST_USER_PASSWORD);
 
         updatePasswordRecoveryFeatureStatus(true);
         updateSelfRegistrationStatus(true);
@@ -152,16 +159,10 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
     @Test(description = "Verify the password update in self service portal with pre update password action")
     public void testUserUpdatePassword() throws Exception {
 
-        Map<String, String> passwordValue = new HashMap<>();
-        passwordValue.put(PASSWORD_PROPERTY, TEST_USER_UPDATED_PASSWORD);
-        PatchOperationRequestObject patchUserInfo = new PatchOperationRequestObject()
-                .addOperations(new UserItemAddGroupobj()
-                        .op(UserItemAddGroupobj.OpEnum.REPLACE)
-                        .value(passwordValue));
-        org.json.simple.JSONObject response = scim2RestClient.updateUserMe(patchUserInfo,
-                TEST_USER1_USERNAME + "@" + tenantInfo.getDomain(), TEST_USER_PASSWORD);
-
-        assertNotNull(response);
+        enableRuleConfig(USER_INITIATED_PASSWORD_UPDATE, actionId);
+        try (CloseableHttpResponse response = changePassword(userAccessToken, TEST_USER_PASSWORD, TEST_USER_UPDATED_PASSWORD)) {
+            assertEquals(response.getStatusLine().getStatusCode(), HttpServletResponse.SC_NO_CONTENT);
+        }
         assertActionRequestPayload(userId, TEST_USER_UPDATED_PASSWORD, PreUpdatePasswordEvent.FlowInitiatorType.USER,
                 PreUpdatePasswordEvent.Action.UPDATE);
     }
@@ -170,6 +171,7 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
             description = "Verify the admin update password with pre update password action")
     public void testAdminUpdatePassword() throws Exception {
 
+        enableRuleConfig(ADMIN_INITIATED_PASSWORD_UPDATE, actionId);
         Map<String, String> passwordValue = new HashMap<>();
         passwordValue.put(PASSWORD_PROPERTY, TEST_USER_PASSWORD);
         PatchOperationRequestObject patchUserInfo = new PatchOperationRequestObject()
@@ -186,6 +188,7 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
             description = "Verify the admin force password reset with pre update password action")
     public void testAdminForcePasswordReset() throws Exception {
 
+        enableRuleConfig(ADMIN_INITIATED_PASSWORD_RESET, actionId);
         PatchOperationRequestObject patchUserInfo = new PatchOperationRequestObject()
                 .addOperations(new UserItemAddGroupobj()
                         .op(UserItemAddGroupobj.OpEnum.REPLACE)
@@ -206,6 +209,7 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
             description = "Verify the admin invite user to set password with pre update password action")
     public void testAdminInviteUserToSetPassword() throws Exception {
 
+        enableRuleConfig(ADMIN_INITIATED_USER_INVITE_TO_SET_PASSWORD, actionId);
         UserObject adminInvitedUserInfo = new UserObject()
                 .userName(TEST_USER2_USERNAME)
                 .password(TEST_USER_PASSWORD)
@@ -228,6 +232,7 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
             description = "Verify the password update by an authorized application with pre update password action")
     public void testApplicationUpdatePassword() throws Exception {
 
+        enableRuleConfig(APPLICATION_INITIATED_PASSWORD_UPDATE, actionId);
         String token = getTokenWithClientCredentialsGrant(application.getId(), clientId, clientSecret);
         Map<String, String> passwordValue = new HashMap<>();
         passwordValue.put(PASSWORD_PROPERTY, TEST_USER_PASSWORD);
@@ -256,10 +261,29 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
 //                 PreUpdatePasswordEvent.Action.RESET);
 //     }
 
+//    @Test(dependsOnMethods = "testApplicationUpdatePassword",
+//            description = "Verify the user password recovery flow with pre update password action")
+//    public void testUserResetPasswordWithPasswordRecoveryFlow() throws Exception {
+//
+//        updateFlowStatus(PASSWORD_RECOVERY_FLOW_TYPE, true);
+//        addPasswordRecoveryFlow();
+//
+//        Object executionResponseObj = executePasswordRecoveryFlow();
+//        assertTrue(executionResponseObj instanceof FlowExecutionResponse,
+//                "Expected FlowExecutionResponse for success flow.");
+//        FlowExecutionResponse flowExecutionResponse = (FlowExecutionResponse) executionResponseObj;
+//        assertNotNull(flowExecutionResponse, "Flow execution response cannot be null.");
+//
+//        assertActionRequestPayload(userId, RESET_PASSWORD, PreUpdatePasswordEvent.FlowInitiatorType.USER,
+//                PreUpdatePasswordEvent.Action.RESET);
+//        updateFlowStatus(PASSWORD_RECOVERY_FLOW_TYPE, false);
+//    }
+
     @Test(dependsOnMethods = "testApplicationUpdatePassword",
             description = "Verify the user password set with pre update password action via offline invite link")
     public void testUserSetPasswordViaOfflineInviteLink() throws Exception {
 
+        enableRuleConfig(ADMIN_INITIATED_REGISTRATION, actionId);
         UserObject offlineInvitingUserInfo = new UserObject()
                 .userName(TEST_USER2_USERNAME)
                 .password(TEST_USER_PASSWORD)
@@ -271,6 +295,7 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
                 PreUpdatePasswordEvent.Action.REGISTER);
         serviceExtensionMockServer.resetRequests();
 
+        enableRuleConfig(ADMIN_INITIATED_USER_INVITE_TO_SET_PASSWORD, actionId);
         InvitationRequest invitationRequest = new InvitationRequest()
                 .username(offlineInvitingUserInfo.getUserName())
                 .userstore(PRIMARY_USER_STORE_NAME);
@@ -286,9 +311,38 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
     }
 
     @Test(dependsOnMethods = "testUserSetPasswordViaOfflineInviteLink",
+            description = "Verify admin invited user registration flow with pre update password action")
+    public void testSetPasswordWithInvitedUserRegistrationFlow() throws Exception {
+
+        enableRuleConfig(ADMIN_INITIATED_USER_INVITE_TO_SET_PASSWORD, actionId);
+        updateFlowStatus(INVITED_USER_REGISTRATION_FLOW_TYPE, true);
+        addInvitedUserRegistrationFlow();
+
+        UserObject adminInvitedUserInfo = new UserObject()
+                .userName(TEST_USER2_USERNAME)
+                .password(TEST_USER_PASSWORD)
+                .name(new Name().givenName(TEST_USER_GIVEN_NAME).familyName(TEST_USER_LASTNAME))
+                .addEmail(new Email().value(TEST_USER_EMAIL))
+                .scimSchemaExtensionSystem(new ScimSchemaExtensionSystem().askPassword(true));
+        String adminInvitedUserId = scim2RestClient.createUser(adminInvitedUserInfo);
+
+        Object executionResponseObj = executeAdminInvitedUserRegistrationFlow();
+        assertTrue(executionResponseObj instanceof FlowExecutionResponse,
+                "Expected FlowExecutionResponse for success flow.");
+        FlowExecutionResponse executionResponse = (FlowExecutionResponse) executionResponseObj;
+        assertNotNull(executionResponse, "Flow execution response cannot be null.");
+
+        assertActionRequestPayload(adminInvitedUserId, RESET_PASSWORD,
+                PreUpdatePasswordEvent.FlowInitiatorType.ADMIN, PreUpdatePasswordEvent.Action.INVITE);
+        scim2RestClient.deleteUser(adminInvitedUserId);
+        updateFlowStatus(INVITED_USER_REGISTRATION_FLOW_TYPE, false);
+    }
+
+    @Test(dependsOnMethods = "testSetPasswordWithInvitedUserRegistrationFlow",
             description = "Verify the admin initiated user registration with pre update password action")
     public void testAdminInitiatedUserRegistration() throws Exception {
 
+        enableRuleConfig(ADMIN_INITIATED_REGISTRATION, actionId);
         UserObject adminRegisteredUserInfo = new UserObject()
                 .userName(TEST_USER2_USERNAME)
                 .password(TEST_USER_PASSWORD)
@@ -306,6 +360,7 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
             description = "Verify the application initiated user registration with pre update password action")
     public void testApplicationInitiatedUserRegistration() throws Exception {
 
+        enableRuleConfig(APPLICATION_INITIATED_REGISTRATION, actionId);
         String token = getTokenWithClientCredentialsGrant(application.getId(), clientId, clientSecret);
         UserObject appRegisteredUserInfo = new UserObject()
                 .userName(TEST_USER2_USERNAME)
@@ -329,8 +384,9 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
             description = "Verify the user initiated self registration flow with pre update password action")
     public void testUserRegistrationWithSelfRegistrationFlow() throws Exception {
 
+        enableRuleConfig(USER_INITIATED_REGISTRATION, actionId);
         updateFlowStatus(REGISTRATION_FLOW_TYPE, true);
-        addRegistrationFlow(flowManagementClient);
+        addRegistrationFlow();
         flowExecutionClient.initiateFlowExecution(REGISTRATION_FLOW_TYPE);
         FlowExecutionRequest flowExecutionRequest = buildUserRegistrationFlowRequest();
         Object executionResponseObj = flowExecutionClient.executeFlow(flowExecutionRequest);
@@ -350,6 +406,7 @@ public class PreUpdatePasswordActionSuccessTestCase extends PreUpdatePasswordAct
             description = "Verify the user initiated self registration with pre update password action")
     public void testUserInitiatedSelfRegistration() throws Exception {
 
+        enableRuleConfig(USER_INITIATED_REGISTRATION, actionId);
         String userRegistrationFormURL = retrieveUserRegistrationURL(application);
         submitUserRegistrationForm(userRegistrationFormURL, TEST_USER2_USERNAME, TEST_USER_PASSWORD);
 

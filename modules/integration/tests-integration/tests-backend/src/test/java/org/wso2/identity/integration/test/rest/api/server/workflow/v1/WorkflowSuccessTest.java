@@ -63,7 +63,7 @@ public class WorkflowSuccessTest extends WorkflowBaseTest {
     private String createdRoleName;
     private String createdRoleId;
 
-    private static final String APPROVAL_API_PATH = "/api/users/v1/me/approval-tasks";
+    private static final String APPROVAL_API_PATH = "/api/users/v2/me/approval-tasks";
     private static final String USER_SEARCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:SearchRequest";
 
 
@@ -82,6 +82,7 @@ public class WorkflowSuccessTest extends WorkflowBaseTest {
     public void init() throws IOException {
 
         super.testInit(API_VERSION, swaggerDefinition, tenant);
+        cleanupWorkflowByName("User Approval Workflow");
         // Prepare SCIM2 client for user operations used in approval flow test.
         scim2RestClient = new SCIM2RestClient(serverURL, tenantInfo);
     }
@@ -89,6 +90,12 @@ public class WorkflowSuccessTest extends WorkflowBaseTest {
     @AfterClass(alwaysRun = true)
     public void cleanup() throws Exception {
 
+        if (workflowAssociationId != null) {
+            getResponseOfDelete(WORKFLOW_ASSOCIATION_API_BASE_PATH + PATH_SEPARATOR + workflowAssociationId);
+        }
+        if (workflowId != null) {
+            getResponseOfDelete(WORKFLOW_API_BASE_PATH + PATH_SEPARATOR + workflowId);
+        }
         if (createdRoleId != null) {
             scim2RestClient.deleteV2Role(createdRoleId);
         }
@@ -413,7 +420,7 @@ public class WorkflowSuccessTest extends WorkflowBaseTest {
 
     private void approveFirstPendingTask() {
 
-        Response listResp = getResponseOfGetNoFilter(APPROVAL_API_PATH);
+        Response listResp = getResponseOfGetNoFilter(APPROVAL_API_PATH + "?status=READY");
         listResp.then().log().ifValidationFails().assertThat().statusCode(HttpStatus.SC_OK);
 
         String taskId = listResp.jsonPath().getString("[0].id");
